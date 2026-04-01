@@ -1,102 +1,87 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-This is a Rust-based statusline generator for Claude Code that creates rich terminal status displays with git information, model context usage, session details, and PR status. The tool processes JSON input from stdin and outputs a formatted statusline with ANSI color codes.
+A Rust statusline generator for Claude Code. Reads JSON from stdin, outputs an ANSI-colored statusline showing: working directory (fish-style shortened), git branch, worktree indicator, model name, context window usage (progress bar + percentage), session cost, lines changed, agent name, and session duration.
 
 ## Key Commands
 
-### Build and Run
-
 ```bash
-cargo build --release
-cargo run
+cargo build --release     # Release build
+cargo run < test.json     # Manual test with sample data
+cargo check               # Quick type checking
+cargo clippy              # Lint
+cargo fmt                 # Format
+cargo test                # Run unit tests
+just ci                   # Run all CI checks (fmt, clippy, tests)
 ```
 
-### Testing with sample data
-
-```bash
-cargo run < test.json
-```
-
-**Important**: Never generate test JSON files. Always look for existing ones in `~/.claude` directory for testing.
-
-### Development
-
-```bash
-cargo check    # Quick syntax/type checking
-cargo clippy   # Linting
-cargo fmt      # Code formatting
-```
+**Important**: Never generate test JSON files. Use `test.json` in the repo root or look in `~/.claude`.
 
 ## Architecture
 
-### Core Components
+### Entry Point
 
-**src/main.rs**: Entry point that handles command-line arguments (`--short`, `--skip-pr-status`) and calls the main statusline function.
+**src/main.rs**: Calls `statusline()` from the library and prints the result. No CLI argument handling.
 
-**statusline() function**: The main orchestrator that:
+**src/lib.rs**: All logic lives here.
 
-1. Parses JSON input containing workspace, model, and session information
-2. Determines display strategy based on directory type (non-git, git repo, worktree)
-3. Assembles final output string with proper color coding and formatting
+### Input Structs
 
-### Key Features
+`StatusInput` is the top-level serde struct. All fields use `#[serde(default)]` so missing fields deserialize gracefully.
 
-**Smart Path Display**: Shows abbreviated paths in `--short` mode, hiding standard project locations (`~/Projects/{repo_name}`) but always showing non-standard paths.
+| Struct | Key Fields | Purpose |
+|--------|-----------|---------|
+| `StatusInput` | workspace, model, output_style, context_window, cost, worktree, agent | Top-level container |
+| `Workspace` | `current_dir: Option<String>` | Working directory (required for meaningful output) |
+| `Model` | `display_name: Option<String>` | Model name shown in statusline |
+| `OutputStyle` | `name: Option<String>` | Style label (e.g. "explanatory") shown in parens |
+| `ContextWindow` | `context_window_size`, `used_percentage`, `current_usage` | Context usage data |
+| `CurrentUsage` | `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` | Token breakdown for manual % calculation |
+| `Cost` | `total_cost_usd`, `total_duration_ms`, `total_lines_added`, `total_lines_removed` | Session cost and line change stats |
+| `Worktree` | `name`, `branch` | Worktree indicator |
+| `Agent` | `name: Option<String>` | Agent name when running as a sub-agent |
 
-**Git Integration**:
+### Statusline Assembly
 
-- Detects git repositories and worktrees
-- Shows branch names with special `↟` indicator for worktrees
-- Displays git status with file change counts (+, ~, -, ?) and line deltas (Δ)
+`statusline()` builds these display components, then joins non-empty ones with `•` separators:
 
-**Context Management**:
+1. **Path**: Fish-style shortened (`fish_shorten_path`), colored cyan
+2. **Git branch**: Via `git rev-parse --abbrev-ref HEAD`, colored green, with `↟` worktree suffix
+3. **Lines changed**: `+N -M` from cost data, green/red
+4. **Model**: Nerd Font icon + model name in orange, optional style suffix in gray
+5. **Context bar**: 15-char progress bar (█/░) + percentage, color-coded by usage (red ≥90%, orange ≥70%, yellow ≥50%, gray <50%)
+6. **Cost**: Dollar amount, color-coded (green <$5, yellow <$20, red ≥$20)
+7. **Agent**: Agent name in gray with icon
+8. **Duration**: Formatted as `Nh Mm` or `<1m`, from `total_duration_ms`
 
-- Parses transcript files to calculate context usage percentage
-- Color-codes context percentage (red ≥90%, orange ≥70%, yellow ≥50%, gray <50%)
-- Handles both string and numeric timestamp formats
+### ANSI Colors
 
-**Caching System**:
+Constants defined at the top of `lib.rs`: `RESET`, `RED`, `GREEN`, `YELLOW`, `CYAN`, `GRAY`, `ORANGE`, `LIGHT_CYAN`, `LIGHT_BLUE`, `LIGHT_MAGENTA`, `GOLD`. Uses standard ANSI escapes and 256-color codes.
 
-- PR URLs cached for 60 seconds in `.git/statusbar/pr-{branch}`
-- PR status (CI checks) cached for 30 seconds in `.git/statusbar/pr-status-{branch}`
-- Session summaries cached in `.git/statusbar/session-{id}-summary`
+### Key Functions
 
-**Session Analysis**:
-
-- Extracts session duration from transcript timestamps
-- Generates AI-powered summaries of user's first substantial message
-- Displays session ID and duration information
-
-**PR Status Display**:
-
-- Shows GitHub PR URLs and CI check status using `gh` CLI
-- Groups checks by status (fail ✗, pending ○, pass ✓) with counts and names
-- Handles missing `gh` CLI gracefully
+- `statusline()` — Main orchestrator, returns the assembled String
+- `read_input()` — Reads stdin, deserializes to `StatusInput`
+- `is_git_repo(dir)` — Checks `git rev-parse --is-inside-work-tree`
+- `get_git_branch(dir)` — Gets current branch name via git
+- `fish_shorten_path(path)` — Replaces $HOME with ~, shortens intermediate dirs to first char (hidden dirs keep dot + first char)
+- `format_cost(f64)` — 3 decimal places below $0.01, 2 above
+- `format_duration(ms)` — Formats milliseconds as `Nh Mm`, `Nm`, or `<1m`
 
 ### Display Format
 
-The output follows this order: `path [branch+status] • context%+model • summary • PR+status • session_id • duration`
+```
+path  branch(+N -M) • 󰊭 Model (style) • 󱦛 ███░░░░░░░░░░░░ 45% • 󰊖 $7.50 • 󰚩 agent • 󰔚 15m
+```
 
-Example: `~/project [main +2 ~1] • 45% Opus • fix login bug • https://github.com/... ✓3 • abc123 • 15m`
+## Dependencies
 
-### Dependencies
+- **serde** + **serde_json**: JSON deserialization only
+- **External**: `git` (required for branch/repo detection)
 
-- **serde_json**: JSON parsing for input data and transcript analysis
-- **chrono**: Timestamp parsing and duration calculations
-- **External tools**: Requires `git` and optionally `gh` CLI for full functionality
+## Input Format
 
-### Input Format
-
-Expects JSON on stdin with fields:
-
-- `workspace.current_dir`: Working directory path
-- `model.display_name`: AI model name for display
-- `transcript_path`: Path to conversation transcript file
-- `session_id`: Unique session identifier
-
-The `test.json` file shows the expected input structure for development and testing.
-
+JSON on stdin. See `test.json` for the full structure. Only `workspace.current_dir` is required for meaningful output; all other fields are optional and degrade gracefully when absent.

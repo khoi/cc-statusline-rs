@@ -73,7 +73,7 @@ pub fn statusline(_show_pr_status: bool) -> String {
             "\x1b[90m"
         };
 
-        let bar_width: usize = 15;
+        let bar_width: usize = 10;
         let filled = (pct * bar_width as f64 / 100.0).round() as usize;
         let empty = bar_width.saturating_sub(filled);
         let bar: String = "█".repeat(filled) + &"░".repeat(empty);
@@ -94,7 +94,7 @@ pub fn statusline(_show_pr_status: bool) -> String {
     };
 
     let branch = if is_git_repo(current_dir) {
-        get_git_branch(current_dir)
+        truncate_middle(&get_git_branch(current_dir), 32)
     } else {
         String::new()
     };
@@ -193,7 +193,6 @@ pub fn read_input() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     io::stdin().read_to_string(&mut buffer)?;
     Ok(serde_json::from_str(&buffer)?)
 }
-
 
 pub fn get_git_branch(working_dir: &str) -> String {
     let output = Command::new("git")
@@ -303,6 +302,20 @@ pub fn format_tokens(tokens: u64) -> String {
     }
 }
 
+pub fn truncate_middle(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    let keep = max - 1;
+    let head = keep - keep / 2;
+    let tail = keep / 2;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
 pub fn fish_shorten_path(path: &str) -> String {
     let home = home_dir();
     let path = path.replace(&home, "~");
@@ -330,4 +343,27 @@ pub fn fish_shorten_path(path: &str) -> String {
         .collect();
 
     shortened.join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_middle_short_unchanged() {
+        assert_eq!(truncate_middle("main", 32), "main");
+    }
+
+    #[test]
+    fn truncate_middle_exact_max_unchanged() {
+        let s = "a".repeat(32);
+        assert_eq!(truncate_middle(&s, 32), s);
+    }
+
+    #[test]
+    fn truncate_middle_caps_long_branch() {
+        let result = truncate_middle("khoi/goo-3197-cursor-smoothing-diagnostics", 32);
+        assert_eq!(result, "khoi/goo-3197-cu…ing-diagnostics");
+        assert_eq!(result.chars().count(), 32);
+    }
 }

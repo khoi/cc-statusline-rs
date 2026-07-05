@@ -16,19 +16,19 @@ pub fn statusline(_show_pr_status: bool) -> String {
         .and_then(|m| m.get("display_name"))
         .and_then(|d| d.as_str());
 
-    let output_style = input
-        .get("output_style")
-        .and_then(|o| o.get("name"))
-        .and_then(|n| n.as_str());
+    let effort = input
+        .get("effort")
+        .and_then(|e| e.get("level"))
+        .and_then(|l| l.as_str());
 
     let model_display = if let Some(model) = model {
-        let style_suffix = match output_style {
-            Some(style) => format!(" \x1b[90m({})\x1b[0m", style),
+        let effort_suffix = match effort {
+            Some(level) => format!(" \x1b[90m({})\x1b[0m", level),
             None => String::new(),
         };
         format!(
             "\x1b[38;5;14m\u{e26d} \x1b[38;5;208m{}{}",
-            model, style_suffix
+            model, effort_suffix
         )
     } else {
         String::new()

@@ -12,8 +12,8 @@
     "project_dir": "/original/project/directory"
   },
   "version": "1.0.80",
-  "output_style": {
-    "name": "default"
+  "effort": {
+    "level": "high"
   },
   "cost": {
     "total_cost_usd": 7.50,
